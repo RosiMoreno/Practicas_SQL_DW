@@ -1,0 +1,100 @@
+CREATE OR REPLACE TABLE keepcoding.ivr_summary AS
+WITH dni_steps
+  AS (SELECT ivr_id 
+           , document_type
+           , document_identification
+        FROM `sqlkeepcoding2023.keepcoding.ivr_steps`
+       WHERE document_identification <> 'UNKNOWN' 
+     QUALIFY ROW_NUMBER() OVER (PARTITION BY (CAST(ivr_id AS NUMERIC)) ORDER BY module_sequece DESC, document_identification) = 1)
+
+    , phone_steps
+  AS (SELECT ivr_id 
+           , customer_phone
+        FROM `sqlkeepcoding2023.keepcoding.ivr_steps`
+       WHERE customer_phone <> 'UNKNOWN'
+     QUALIFY ROW_NUMBER() OVER (PARTITION BY (CAST(ivr_id AS NUMERIC)) ORDER BY module_sequece DESC, customer_phone) = 1)
+
+   , ba_id_steps
+  AS (SELECT ivr_id 
+           , billing_account_id
+        FROM `sqlkeepcoding2023.keepcoding.ivr_steps`
+       WHERE billing_account_id <> 'UNKNOWN'
+     QUALIFY ROW_NUMBER() OVER (PARTITION BY (CAST(ivr_id AS NUMERIC)) ORDER BY module_sequece DESC, billing_account_id) = 1)
+
+   , llamadas_repetidas
+  AS (SELECT calls.ivr_id
+           , calls.start_date
+           , LEAD(calls.start_date) OVER(PARTITION BY phone_number ORDER BY calls.start_date, calls.ivr_id) AS next_call_date
+           , DATETIME_DIFF(LEAD(calls.start_date) OVER(PARTITION BY phone_number ORDER BY calls.start_date, calls.ivr_id), calls.start_date, HOUR) AS next_hours_diff
+           , IF(DATETIME_DIFF(LEAD(calls.start_date) OVER(PARTITION BY phone_number ORDER BY calls.start_date, calls.ivr_id),calls.start_date, HOUR) < 24, 1, 0) AS cause_recall_phone_24H
+           , LAG(calls.start_date) OVER(PARTITION BY phone_number ORDER BY calls.start_date, calls.ivr_id) AS previous_call_date
+           , DATETIME_DIFF(LAG(calls.start_date) OVER(PARTITION BY phone_number ORDER BY calls.start_date, calls.ivr_id), calls.start_date, HOUR) AS previous_hours_diff
+           , IF(DATETIME_DIFF(LAG(calls.start_date) OVER(PARTITION BY phone_number ORDER BY calls.start_date, calls.ivr_id),calls.start_date, HOUR) < 24, 1, 0) AS repeated_phone_24H
+        FROM `sqlkeepcoding2023.keepcoding.ivr_calls` calls)
+
+SELECT detail.ivr_id
+     , detail.phone_number
+     , detail.ivr_result
+     , detail.vdn_label
+           , CASE WHEN STARTS_WITH(detail.vdn_label , 'ATC') THEN 'FRONT'
+                  WHEN STARTS_WITH(detail.vdn_label , 'TECH') THEN 'TECH'
+                  WHEN detail.vdn_label = 'ABSORPTION' THEN 'ABSORPTION'
+                  ELSE 'RESTO'
+              END AS vdn_aggregation
+     , detail.start_date
+     , detail.start_date_id
+     , detail.end_date
+     , detail.end_date_id
+     , detail.total_duration
+     , detail.customer_segment
+     , detail.ivr_language
+     , detail.steps_module
+     , detail.module_aggregation
+     , COALESCE(dni_steps.document_identification, 'DESCONOCIDO') AS document_identification
+     , COALESCE(NULLIF(dni_steps.document_type, "UNKNOWN"), "DESCONOCIDO") AS document_type
+     , COALESCE(phone_steps.customer_phone, 'DESCONOCIDO') AS customer_phone
+     , COALESCE(ba_id_steps.billing_account_id, 'DESCONOCIDO') AS billing_account_id
+     , MAX(IF( detail.module_aggregation= 'AVERIA_MASIVA', 1, 0)) AS masiva_lg 
+     , MAX(IF(steps.step_name = 'CUSTOMERINFOBYPHONE.TX' AND steps.step_description_error = 'UNKNOWN',1,0)) AS info_by_phone_lg
+     , MAX(IF(steps.step_name = 'CUSTOMERINFOBYDNI.TX' AND steps.step_description_error = 'UNKNOWN',1,0)) AS info_by_dni_lg
+     , llamadas_repetidas.cause_recall_phone_24H
+     , llamadas_repetidas.repeated_phone_24H
+  FROM `sqlkeepcoding2023.keepcoding.ivr_detail` detail
+  LEFT
+  JOIN `keepcoding.ivr_calls` calls
+    ON detail.ivr_id = calls.ivr_id
+  LEFT
+  JOIN `sqlkeepcoding2023.keepcoding.ivr_steps` steps
+    ON detail.ivr_id = steps.ivr_id
+  LEFT 
+  JOIN dni_steps
+    ON dni_steps.ivr_id = steps.ivr_id
+  LEFT 
+  JOIN phone_steps
+    ON phone_steps.ivr_id = steps.ivr_id
+  LEFT 
+  JOIN ba_id_steps
+    ON ba_id_steps.ivr_id = steps.ivr_id
+  LEFT 
+  JOIN llamadas_repetidas
+    ON llamadas_repetidas.ivr_id = calls.ivr_id
+ GROUP BY detail.ivr_id
+     , phone_number
+     , ivr_result
+     , vdn_label
+     , start_date
+     , start_date_id
+     , end_date
+     , end_date_id
+     , total_duration
+     , customer_segment
+     , ivr_language
+     , steps_module
+     , module_aggregation
+     , calls.ivr_id
+     , llamadas_repetidas.cause_recall_phone_24H
+     , llamadas_repetidas.repeated_phone_24H
+     , dni_steps.document_identification
+     , dni_steps.document_type
+     , phone_steps.customer_phone
+     , ba_id_steps.billing_account_id

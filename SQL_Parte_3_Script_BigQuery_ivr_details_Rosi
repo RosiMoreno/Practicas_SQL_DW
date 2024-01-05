@@ -1,0 +1,35 @@
+
+CREATE OR REPLACE TABLE keepcoding.ivr_detail AS
+SELECT calls.ivr_id
+     , calls.phone_number
+     , calls.ivr_result
+     , calls.vdn_label
+     , calls.start_date
+     , FORMAT_DATE('%Y%m%d', start_date) AS start_date_id
+     , calls.end_date
+     , FORMAT_DATE('%Y%m%d', end_date) AS end_date_id
+     , calls.total_duration
+     , calls.customer_segment
+     , calls.ivr_language
+     , calls.steps_module
+     , calls.module_aggregation
+     , IFNULL(module.module_sequece, -9999999) AS module_sequence
+     , IFNULL(module_name, 'UNKNOWN') AS module_name
+     , IFNULL(module_duration, -9999999) AS module_duration
+     , IFNULL(module_result, 'UNKNOWN') AS module_result
+     , IFNULL(step.step_sequence, -99999999) AS step_sequence
+     , IFNULL(step.step_name, 'UNKNOWN') AS step_name
+     , IFNULL(step.step_result, 'UNKNOWN') AS step_result
+     , IFNULL(step.step_description_error, 'UNKNOWN') AS step_description_error
+     , IFNULL(step.document_type, 'UNKNOWN') AS document_type
+     , IFNULL(step.document_identification, 'UNKNOWN') AS document_identification
+     , IFNULL(step.customer_phone, 'UNKNOWN') AS customer_phone
+     , IFNULL(step.billing_account_id, 'UNKNOWN') AS billing_account_id
+  FROM `keepcoding.ivr_calls` calls
+  LEFT
+  JOIN `keepcoding.ivr_modules` module
+    ON calls.ivr_id = module.ivr_id
+  LEFT
+  JOIN `keepcoding.ivr_steps` step
+    ON module.ivr_id = step.ivr_id AND module.module_sequece = step.module_sequece
+ ORDER BY calls.ivr_id DESC
